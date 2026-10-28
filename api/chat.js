@@ -24,8 +24,8 @@ const clean = (s) => String(s).replace(/\*+|`+/g, "").replace(/^#+\s*/, "").trim
 
 // "LEAD:/PICK:" 형식의 답을 읽는다. 장소 이름은 find_spots 결과에 있는 것만 인정한다.
 function parseAnswer(text, steps) {
-  const known = new Set(
-    steps.filter((s) => s.tool === "find_spots").flatMap((s) => (s.output.spots ?? []).map((p) => p.name))
+  const known = new Map(
+    steps.filter((s) => s.tool === "find_spots").flatMap((s) => (s.output.spots ?? []).map((p) => [p.name, p.description]))
   );
   let lead = "";
   const picks = [];
@@ -35,7 +35,7 @@ function parseAnswer(text, steps) {
     else if (line.startsWith("PICK:")) {
       const [name, ...rest] = line.slice(5).split("|");
       const n = name.trim();
-      if (known.has(n)) picks.push({ name: n, desc: rest.join("|").trim() });
+      if (known.has(n)) picks.push({ name: n, desc: rest.join("|").trim(), type: known.get(n) });
     }
   }
   const weather = steps.find((s) => s.tool === "get_weather" && !s.output.error)?.output ?? null;

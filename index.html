@@ -28,14 +28,12 @@
         .weather .detail { font-size: 13px; color: #556; margin-top: 2px; }
         .lead { margin: 14px 4px 10px; font-size: 15px; color: #334; }
 
-        /* 장소 카드: 작은 사진 + 이름 + 설명 */
+        /* 장소 카드: 이모지 타일 + 이름 + 설명 */
         .spot { display: flex; gap: 12px; align-items: center; }
         .spot .thumb { flex: none; width: 72px; height: 72px; border-radius: 10px; background: #e5ecfb; overflow: hidden;
                        display: flex; align-items: center; justify-content: center; font-size: 28px; }
-        .spot .thumb img { width: 100%; height: 100%; object-fit: cover; }
         .spot .name { font-weight: bold; margin-bottom: 3px; }
         .spot .desc { font-size: 14px; color: #445; line-height: 1.5; }
-        .credit { font-size: 12px; color: #889; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -54,7 +52,6 @@
     </div>
 
     <div id="log"></div>
-    <div class="credit">장소 사진 출처: 위키백과(Wikipedia)</div>
 </main>
 
 <script>
@@ -82,23 +79,30 @@
             </div>`)
     }
 
-    // 위키백과 대표 사진 (없으면 📍 그대로)
-    const loadPhoto = async (name, box, retry = true) => {
-        try {
-            const r = await fetch("https://ko.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(name))
-            if (r.status === 429 && retry) return setTimeout(() => loadPhoto(name, box, false), 1000) // 잠시 후 한 번 더
-            if (!r.ok) return
-            const d = await r.json()
-            if (d.type !== "standard" || !d.thumbnail) return
-            box.innerHTML = `<img alt="${esc(name)}" src="${esc(d.thumbnail.source)}">`
-        } catch {}
+    // 장소 종류별 이모지 타일 (이름 + 설명에 들어 있는 단어로 고른다. 위에서부터 먼저 맞는 것 적용)
+    const TILES = [
+        [/해변|해수욕장|바다|포구|해안|항/, "🌊", "#dbeafe"],
+        [/폭포/,                          "💦", "#cffafe"],
+        [/굴/,                            "🕳️", "#e7e5e4"],
+        [/오름|봉|산/,                    "⛰️", "#dcfce7"],
+        [/숲|수목원|공원|정원/,           "🌳", "#d1fae5"],
+        [/미술|갤러리|박물관|전시/,       "🖼️", "#ede9fe"],
+        [/목장/,                          "🐴", "#fef3c7"],
+        [/올레|길|도로/,                  "🚶", "#ffedd5"],
+        [/마을/,                          "🏡", "#fce7f3"],
+        [/시장/,                          "🛍️", "#fee2e2"],
+    ]
+    const tileOf = p => {
+        const t = p.name + " " + (p.type ?? "")
+        const [, icon, bg] = TILES.find(([re]) => re.test(t)) ?? [0, "🏝️", "#e0f2fe"]
+        return { icon, bg }
     }
 
     const spotCard = p => {
-        const card = add("spot", `
-            <div class="thumb">📍</div>
+        const { icon, bg } = tileOf(p)
+        add("spot", `
+            <div class="thumb" style="background:${bg}">${icon}</div>
             <div><div class="name">${esc(noMd(p.name))}</div><div class="desc">${esc(noMd(p.desc))}</div></div>`)
-        loadPhoto(p.name, card.querySelector(".thumb"))
     }
 
     form.onsubmit = async e => {
@@ -106,7 +110,7 @@
         const message = q.value.trim()
         if (!message) return
         add("me", esc(message))
-        const wait = add("wait", "에이전트가 도구를 고르는 중...")
+        const wait = add("wait", "오늘 날씨에 어울리는 명소를 찾는 중이에요 😊")
         send.disabled = true
         try {
             const r = await fetch("/api/chat", {
