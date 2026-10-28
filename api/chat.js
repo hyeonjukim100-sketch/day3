@@ -11,7 +11,36 @@ const SYSTEM = `너는 제주도 여행 추천 도우미다.
 - 추천 전에 get_weather 로 날씨를 확인하고, find_spots 로 후보를 찾는다. 두 도구는 서로 독립적이라 한 번에 같이 불러도 된다.
 - 비가 오거나 강수확률이 높으면 실내 위주로, 맑으면 야외 위주로 추천한다. 사용자가 실내/야외를 정했으면 그 선호를 우선한다.
 - 추천은 find_spots 결과에 있는 장소만 쓴다. 목록 밖 장소를 지어내지 않는다.
-- 3곳 안팎을 골라, 날씨를 근거로 한 이유를 한두 문장씩 한국어로 짧게 쓴다.`;
+- 3곳을 고른다.
+
+최종 답변은 마크다운 기호(**, #, -, 번호 목록 등)를 절대 쓰지 말고, 아래 형식의 일반 텍스트로만 쓴다. 다른 문장은 덧붙이지 않는다.
+LEAD: 날씨를 반영해 어떤 명소를 추천하는지 알려 주는 짧은 한 문장 (예: 오늘은 맑아서 탁 트인 야외 명소를 골라봤어요)
+PICK: find_spots 결과에 있는 장소 이름 그대로 | 이 장소를 소개하는 한 문장
+PICK: ...
+PICK: ...`;
+
+// 모델이 붙였을 수 있는 마크다운 기호 제거
+const clean = (s) => String(s).replace(/\*+|`+/g, "").replace(/^#+\s*/, "").trim();
+
+// "LEAD:/PICK:" 형식의 답을 읽는다. 장소 이름은 find_spots 결과에 있는 것만 인정한다.
+function parseAnswer(text, steps) {
+  const known = new Set(
+    steps.filter((s) => s.tool === "find_spots").flatMap((s) => (s.output.spots ?? []).map((p) => p.name))
+  );
+  let lead = "";
+  const picks = [];
+  for (const raw of text.split("\n")) {
+    const line = clean(raw);
+    if (line.startsWith("LEAD:")) lead = line.slice(5).trim();
+    else if (line.startsWith("PICK:")) {
+      const [name, ...rest] = line.slice(5).split("|");
+      const n = name.trim();
+      if (known.has(n)) picks.push({ name: n, desc: rest.join("|").trim() });
+    }
+  }
+  const weather = steps.find((s) => s.tool === "get_weather" && !s.output.error)?.output ?? null;
+  return { weather, lead, picks, answer: picks.length ? "" : clean(text) };
+}
 
 // lib/tools.js 의 정의(input_schema)를 Gemini 형식(parameters)으로 바꾼다
 const functionDeclarations = toolDefinitions.map((t) => ({
@@ -59,14 +88,14 @@ module.exports = async (req, res) => {
       const content = reply.candidates?.[0]?.content;
       if (!content?.parts?.length) {
         const why = reply.candidates?.[0]?.finishReason || reply.promptFeedback?.blockReason || "알 수 없음";
-        return res.status(200).json({ answer: `모델이 답을 만들지 못했습니다. (${why})`, steps });
+        return res.status(200).json({ answer: `모델이 답을 만들지 못했습니다. (${why})`, picks: [] });
       }
       contents.push(content); // 모델 응답은 그대로 되돌려 보낸다
 
       const calls = content.parts.filter((p) => p.functionCall).map((p) => p.functionCall);
       if (!calls.length) {
         const answer = content.parts.map((p) => p.text ?? "").join("");
-        return res.status(200).json({ answer, steps });
+        return res.status(200).json(parseAnswer(answer, steps));
       }
 
       // 같은 턴의 도구 호출은 동시에 실행
@@ -79,8 +108,8 @@ module.exports = async (req, res) => {
       );
       contents.push({ role: "user", parts: results });
     }
-    res.status(200).json({ answer: "도구 호출이 너무 길어져 중단했습니다. 질문을 더 간단히 해 주세요.", steps });
+    res.status(200).json({ answer: "도구 호출이 너무 길어져 중단했습니다. 질문을 더 간단히 해 주세요.", picks: [] });
   } catch (e) {
-    res.status(502).json({ error: String(e.message || e), steps });
+    res.status(502).json({ error: String(e.message || e) });
   }
 };
