@@ -24,7 +24,7 @@
         /* 날씨 카드 */
         .weather { display: flex; align-items: center; gap: 14px; background: linear-gradient(135deg, #e0f0ff, #f3f9ff); }
         .weather .icon { font-size: 46px; line-height: 1; }
-        .weather .temp { font-size: 22px; font-weight: bold; }
+        .weather .temp { font-size: 18px; font-weight: bold; }
         .weather .detail { font-size: 13px; color: #556; margin-top: 2px; }
         .lead { margin: 14px 4px 10px; font-size: 15px; color: #334; }
 
@@ -69,13 +69,19 @@
         return d
     }
 
+    // 사용자가 물은 날(오늘/내일/모레)의 날씨를 보여 준다. 오늘이면 지금 기온도 함께.
     const weatherCard = w => {
-        const today = w.forecast[0]
+        const s = w.selected ?? w.forecast[0]
+        const isToday = !w.dayIndex
+        const date = s.date.slice(5).replace("-", "/") // 2026-10-29 → 10/29
+        const title = isToday
+            ? `${w.area} · 오늘(${date}) ${s.weather} · 지금 ${Math.round(w.now.temperature)}°C`
+            : `${w.area} · ${w.day}(${date}) ${s.weather}`
         add("weather", `
-            <div class="icon">${ICON[w.now.weather] ?? "🌤️"}</div>
+            <div class="icon">${ICON[s.weather] ?? "🌤️"}</div>
             <div>
-                <div class="temp">${esc(w.area)} · ${esc(w.now.weather)} ${Math.round(w.now.temperature)}°C</div>
-                <div class="detail">오늘 ${Math.round(today.min)}° ~ ${Math.round(today.max)}° · 강수확률 ${today.rain_probability}% · 바람 ${Math.round(w.now.wind_kmh)}km/h</div>
+                <div class="temp">${esc(title)}</div>
+                <div class="detail">기온 ${Math.round(s.min)}° ~ ${Math.round(s.max)}° · 강수확률 ${s.rain_probability}% · 바람 ${Math.round(isToday ? w.now.wind_kmh : s.wind_kmh)}km/h</div>
             </div>`)
     }
 
