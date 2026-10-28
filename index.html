@@ -14,6 +14,9 @@
         #stats b { color: #fff; }
         #map { height: calc(100vh - 100px); background: #0b0f1a; }
 
+        /* 일반 OSM 타일을 색 반전해서 다크 지도처럼 보이게 한다 */
+        .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6); }
+
         /* 지진 표시: 규모만큼 커지고 퍼져 나가는 원 */
         .quake { position: relative; }
         .quake i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); opacity: .55; border: 1px solid var(--c); }
@@ -58,8 +61,8 @@
         const FEED = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/"
 
         const map = L.map("map", { worldCopyJump: true }).setView([25, 130], 3)
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-            attribution: "&copy; OpenStreetMap contributors &copy; CARTO | 데이터: USGS", maxZoom: 12,
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "&copy; OpenStreetMap contributors | 데이터: USGS", maxZoom: 12,
         }).addTo(map)
         const layer = L.layerGroup().addTo(map)
 
