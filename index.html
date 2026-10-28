@@ -11,21 +11,22 @@
         .layout { display: flex; gap: 16px; max-width: 1180px; margin: 0 auto; padding: 0 16px; }
         main { flex: 1 1 0; min-width: 0; max-width: 680px; padding: 20px 0 60px; }
         #map { flex: 1 1 0; min-width: 0; position: sticky; top: 16px; height: calc(100vh - 32px); margin: 16px 0;
-               border-radius: 12px; box-shadow: 0 1px 3px #0002; z-index: 0; }
+               border: 0; border-radius: 12px; box-shadow: 0 1px 3px #0002; background: #fff; }
         @media (max-width: 900px) {
             .layout { flex-direction: column; }
-            #map { order: -1; position: static; height: 260px; flex: none; margin: 16px 0 0; }
+            #map { order: -1; position: static; height: 340px; flex: none; margin: 16px 0 0; }
             main { max-width: none; padding-top: 12px; }
         }
-        /* 지도 번호 마커 + 카드 번호 */
+        /* 지도 번호 마커, 카드 번호, 안내 문구, 전체 보기 버튼 */
         .pin, .num { display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #2563eb;
                      color: #fff; font-weight: bold; border: 2px solid #fff; box-shadow: 0 1px 4px #0005; }
-        .pin { min-width: 24px; height: 28px; padding: 0 6px; box-sizing: border-box; border-radius: 14px; font-size: 14px;
-               transform: translate(-50%, -50%); white-space: nowrap; }
-        .mapnote { background: #ffffffd9; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #445; }
+        .pin { width: 28px; height: 28px; font-size: 14px; }
         .num { position: absolute; top: -6px; left: -6px; width: 22px; height: 22px; font-size: 12px; }
         .spot.onmap { cursor: pointer; }
         .spot.onmap:hover { box-shadow: 0 2px 8px #2563eb55; }
+        .mapnote { background: #ffffffd9; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #445; }
+        .mapbtn { background: #fff; color: #234; border: 1px solid #c5cee0; border-radius: 6px; padding: 6px 10px; font-size: 13px;
+                  cursor: pointer; box-shadow: 0 1px 3px #0003; }
         h1 { font-size: 22px; margin: 0 0 4px; }
         .sub { color: #667; font-size: 14px; margin: 0 0 16px; }
         form { display: flex; gap: 8px; }
@@ -127,66 +128,93 @@
         return { icon, bg }
     }
 
-    // 지도 (키가 필요 없는 Leaflet + OpenStreetMap)
-    const map = L.map("map").setView([33.38, 126.55], 9)
+    // ---- 지도 (키가 필요 없는 Leaflet + OpenStreetMap) ----
+    const JEJU_VIEW = [[33.20, 126.15], [33.56, 126.98]]
+    const map = L.map("map").fitBounds(JEJU_VIEW)
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors", maxZoom: 18,
     }).addTo(map)
-    const markers = L.featureGroup().addTo(map)
+    const allLayer = L.layerGroup().addTo(map)  // 검색 전: 목록의 모든 장소
+    const pickLayer = L.featureGroup()          // 검색 후: 추천된 장소만
 
-    // 정확한 좌표는 쓰지 않고, 지역(jeju_spots.json 의 area)의 대략적인 중간 지점에 표시한다
+    // 정확한 좌표가 없어서, 지역의 대략적인 중간 지점 둘레에 장소를 고르게 흩뿌려 표시한다
     const CENTERS = {
         "동쪽(성산)": [33.458, 126.930], "동쪽(구좌)": [33.520, 126.850], "제주시": [33.500, 126.530],
         "서쪽(한림)": [33.410, 126.270], "서쪽(안덕)": [33.250, 126.330], "서귀포": [33.250, 126.560],
     }
-    const areaOf = {} // 장소 이름 → 지역
-    fetch("jeju_spots.json").then(r => r.json())
-        .then(d => d.spots.forEach(s => { areaOf[s.name] = s.area }))
-        .catch(() => {})
+    const posOf = {}  // 장소 이름 → [위도, 경도] (대략값)
+    const infoOf = {} // 장소 이름 → {area, type}
 
-    // 지도 왼쪽 아래 안내 문구
     const note = L.control({ position: "bottomleft" })
     note.onAdd = () => {
         const d = L.DomUtil.create("div", "mapnote")
-        d.textContent = "※ 정확한 위치가 아니라 지역의 대략적인 중간 지점입니다"
+        d.textContent = "※ 정확한 위치가 아니라 지역 주변의 대략적인 위치입니다"
         return d
     }
     note.addTo(map)
 
-    const spotCard = (p, i) => {
-        const { icon, bg } = tileOf(p)
-        const known = !!CENTERS[areaOf[p.name]]
-        return add("spot" + (known ? " onmap" : ""), `
-            <div class="thumb" style="background:${bg}">${icon}${known ? `<span class="num">${i + 1}</span>` : ""}</div>
-            <div><div class="name">${esc(noMd(p.name))}</div><div class="desc">${esc(noMd(p.desc))}</div></div>`)
+    const showAll = () => { // 처음 상태로: 모든 장소 보기
+        map.removeLayer(pickLayer)
+        map.addLayer(allLayer)
+        map.fitBounds(JEJU_VIEW)
     }
+    const resetBtn = L.control({ position: "topright" })
+    resetBtn.onAdd = () => {
+        const b = L.DomUtil.create("button", "mapbtn")
+        b.textContent = "전체 장소 보기"
+        L.DomEvent.disableClickPropagation(b)
+        b.onclick = showAll
+        return b
+    }
+    resetBtn.addTo(map)
 
-    // 추천 결과를 지역별로 묶어 지도에 표시하고, 카드를 누르면 그 지역으로 이동하게 한다
-    const showOnMap = (picks, cards) => {
-        markers.clearLayers()
-        const groups = {}
-        picks.forEach((p, i) => { const a = areaOf[p.name]; if (CENTERS[a]) (groups[a] ??= []).push({ p, n: i + 1 }) })
-
-        const byArea = {}
-        for (const [a, items] of Object.entries(groups)) {
-            const c = CENTERS[a]
-            L.circle(c, { radius: 7000, color: "#2563eb", weight: 1, fillOpacity: 0.12 }).addTo(markers)
-            byArea[a] = L.marker(c, { icon: L.divIcon({ className: "", iconSize: [0, 0], html: `<div class="pin">${items.map(x => x.n).join("·")}</div>` }) })
-                .bindPopup(`<b>${esc(a)}</b> (대략적인 위치)<br>` + items.map(x => `${x.n}. ${esc(x.p.name)}`).join("<br>"))
-                .addTo(markers)
+    fetch("jeju_spots.json").then(r => r.json()).then(d => {
+        const count = {}
+        for (const s of d.spots) {
+            const c = CENTERS[s.area]
+            if (!c) continue
+            const k = count[s.area] = (count[s.area] ?? -1) + 1
+            const r = 0.011 * Math.sqrt(k + 1), a = k * 2.399963 // 황금각 배치
+            const pos = posOf[s.name] = [c[0] + r * Math.sin(a), c[1] + r * Math.cos(a) * 1.2]
+            infoOf[s.name] = { area: s.area, type: s.type }
+            L.circleMarker(pos, { radius: 5, color: "#fff", weight: 1, fillColor: "#2563eb", fillOpacity: 0.75 })
+                .bindTooltip(esc(s.name))
+                .bindPopup(`<b>${esc(s.name)}</b><br>${esc(s.area)} · ${esc(s.type)}`)
+                .addTo(allLayer)
         }
+    }).catch(() => {})
+
+    // 추천 결과가 오면 모든 장소 대신 추천된 장소만 번호 마커로 보여 준다
+    const showPicks = (picks, cards) => {
+        pickLayer.clearLayers()
         picks.forEach((p, i) => {
-            const marker = byArea[areaOf[p.name]]
-            if (!marker) return
+            const pos = posOf[p.name]
+            if (!pos) return
+            const marker = L.marker(pos, { icon: L.divIcon({ className: "", html: `<div class="pin">${i + 1}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }) })
+                .bindPopup(`<b>${esc(p.name)}</b><br>${esc(infoOf[p.name].area)}`)
+                .addTo(pickLayer)
+            cards[i].classList.add("onmap")
+            cards[i].querySelector(".thumb").insertAdjacentHTML("beforeend", `<span class="num">${i + 1}</span>`)
+            // 카드를 누르면 지도에서 그 장소로 이동
             cards[i].onclick = () => {
-                if (!markers.hasLayer(marker)) return // 이전 검색의 카드
-                map.flyTo(marker.getLatLng(), 11)
+                if (!pickLayer.hasLayer(marker)) return // 이전 검색의 카드
+                if (!map.hasLayer(pickLayer)) { map.removeLayer(allLayer); map.addLayer(pickLayer) }
+                map.flyTo(pos, 12)
                 marker.openPopup()
                 if (matchMedia("(max-width: 900px)").matches) window.scrollTo({ top: 0, behavior: "smooth" })
             }
         })
-        const n = markers.getLayers().length
-        if (n) map.fitBounds(markers.getBounds(), { padding: [40, 40], maxZoom: 11 })
+        if (!pickLayer.getLayers().length) return
+        map.removeLayer(allLayer)
+        map.addLayer(pickLayer)
+        map.fitBounds(pickLayer.getBounds(), { padding: [50, 50], maxZoom: 11 })
+    }
+
+    const spotCard = p => {
+        const { icon, bg } = tileOf(p)
+        return add("spot", `
+            <div class="thumb" style="background:${bg}">${icon}</div>
+            <div><div class="name">${esc(noMd(p.name))}</div><div class="desc">${esc(noMd(p.desc))}</div></div>`)
     }
 
     form.onsubmit = async e => {
@@ -209,7 +237,7 @@
                 if (d.weather) weatherCard(d.weather)
                 if (d.lead) log.insertAdjacentHTML("beforeend", `<div class="lead">${esc(noMd(d.lead))}</div>`)
                 const picks = d.picks ?? []
-                showOnMap(picks, picks.map(spotCard))
+                showPicks(picks, picks.map(spotCard))
                 if (d.answer) add("answer", esc(noMd(d.answer)))
             }
         } catch (err) {
