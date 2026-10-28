@@ -1,8 +1,8 @@
 // POST /api/chat  { message: "..." }  →  { answer, steps }
-// Claude가 find_spots · get_weather 를 스스로 골라 부르고, 결과를 바탕으로 추천한다.
+// Gemini가 find_spots · get_weather 를 스스로 골라 부르고, 결과를 바탕으로 추천한다.
 const { toolDefinitions, runTool } = require("../lib/tools");
 
-const MODEL = "claude-sonnet-5-5";
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const MAX_TURNS = 5; // 도구 호출 왕복 상한
 const MAX_INPUT = 300;
 
@@ -13,58 +13,71 @@ const SYSTEM = `너는 제주도 여행 추천 도우미다.
 - 추천은 find_spots 결과에 있는 장소만 쓴다. 목록 밖 장소를 지어내지 않는다.
 - 3곳 안팎을 골라, 날씨를 근거로 한 이유를 한두 문장씩 한국어로 짧게 쓴다.`;
 
-async function callClaude(messages) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1024,
-      system: SYSTEM,
-      tools: toolDefinitions,
-      messages,
-    }),
-  });
-  if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+// lib/tools.js 의 정의(input_schema)를 Gemini 형식(parameters)으로 바꾼다
+const functionDeclarations = toolDefinitions.map((t) => ({
+  name: t.name,
+  description: t.description,
+  parameters: t.input_schema,
+}));
+
+async function callGemini(contents) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": process.env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM }] },
+        contents,
+        tools: [{ functionDeclarations }],
+        generationConfig: { maxOutputTokens: 1024 },
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();
 }
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "POST만 지원합니다." });
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: "서버에 ANTHROPIC_API_KEY 환경변수가 없습니다." });
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: "서버에 GEMINI_API_KEY 환경변수가 없습니다." });
   }
 
   const message = String(req.body?.message ?? "").trim().slice(0, MAX_INPUT);
   if (!message) return res.status(400).json({ error: "message가 비어 있습니다." });
 
-  const messages = [{ role: "user", content: message }];
+  const contents = [{ role: "user", parts: [{ text: message }] }];
   const steps = [];
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const reply = await callClaude(messages);
-      messages.push({ role: "assistant", content: reply.content });
+      const reply = await callGemini(contents);
+      const content = reply.candidates?.[0]?.content;
+      if (!content?.parts?.length) {
+        const why = reply.candidates?.[0]?.finishReason || reply.promptFeedback?.blockReason || "알 수 없음";
+        return res.status(200).json({ answer: `모델이 답을 만들지 못했습니다. (${why})`, steps });
+      }
+      contents.push(content); // 모델 응답은 그대로 되돌려 보낸다
 
-      if (reply.stop_reason !== "tool_use") {
-        const answer = reply.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      const calls = content.parts.filter((p) => p.functionCall).map((p) => p.functionCall);
+      if (!calls.length) {
+        const answer = content.parts.map((p) => p.text ?? "").join("");
         return res.status(200).json({ answer, steps });
       }
 
       // 같은 턴의 도구 호출은 동시에 실행
-      const calls = reply.content.filter((b) => b.type === "tool_use");
       const results = await Promise.all(
         calls.map(async (c) => {
-          const output = await runTool(c.name, c.input);
-          steps.push({ tool: c.name, input: c.input, output });
-          return { type: "tool_result", tool_use_id: c.id, content: JSON.stringify(output) };
+          const output = await runTool(c.name, c.args ?? {});
+          steps.push({ tool: c.name, input: c.args ?? {}, output });
+          return { functionResponse: { name: c.name, response: output } };
         })
       );
-      messages.push({ role: "user", content: results });
+      contents.push({ role: "user", parts: results });
     }
     res.status(200).json({ answer: "도구 호출이 너무 길어져 중단했습니다. 질문을 더 간단히 해 주세요.", steps });
   } catch (e) {
