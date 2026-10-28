@@ -3,78 +3,116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>제주 관광지 지도</title>
+    <title>실시간 지진 지도</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
-        body { margin: 0; font-family: sans-serif; }
-        #bar { padding: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-        #map { height: calc(100vh - 90px); }
-        #msg { padding: 0 8px 8px; color: #555; font-size: 14px; }
+        body { margin: 0; font-family: sans-serif; background: #0b0f1a; color: #e6e9f2; }
+        #bar { padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        #bar h1 { font-size: 18px; margin: 0 8px 0 0; }
+        select, button { background: #1a2238; color: #e6e9f2; border: 1px solid #34406a; border-radius: 6px; padding: 6px 10px; }
+        #stats { padding: 0 12px 10px; font-size: 14px; color: #9aa6c8; }
+        #stats b { color: #fff; }
+        #map { height: calc(100vh - 100px); background: #0b0f1a; }
+
+        /* 지진 표시: 규모만큼 커지고 퍼져 나가는 원 */
+        .quake { position: relative; }
+        .quake i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); opacity: .55; border: 1px solid var(--c); }
+        .quake i.ring { background: none; animation: pulse 2s ease-out infinite; }
+        @keyframes pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
+
+        .leaflet-popup-content-wrapper { background: #1a2238; color: #e6e9f2; }
+        .leaflet-popup-tip { background: #1a2238; }
+        .leaflet-popup-content a { color: #7fb4ff; }
+        #legend { position: absolute; right: 12px; bottom: 28px; z-index: 1000; background: #1a2238cc; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.7; }
+        #legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
     </style>
 </head>
 <body>
     <div id="bar">
-        <select id="area">
-            <option>동쪽</option><option>서쪽</option><option>서귀포</option><option>제주시</option>
+        <h1>🌍 실시간 지진 지도</h1>
+        <select id="period">
+            <option value="all_hour">최근 1시간</option>
+            <option value="all_day" selected>최근 24시간</option>
+            <option value="all_week">최근 7일</option>
         </select>
-        <select id="indoor">
-            <option value="">실내/야외 전체</option>
-            <option value="true">실내</option>
-            <option value="false">야외</option>
+        <select id="minMag">
+            <option value="0">모든 규모</option>
+            <option value="2.5">규모 2.5 이상</option>
+            <option value="4.5">규모 4.5 이상</option>
+            <option value="6">규모 6 이상</option>
         </select>
-        <button id="go">찾기</button>
+        <button id="reload">새로고침</button>
     </div>
-    <div id="msg"></div>
+    <div id="stats">불러오는 중...</div>
     <div id="map"></div>
+    <div id="legend">
+        <div><span style="background:#4ade80"></span>규모 3 미만</div>
+        <div><span style="background:#facc15"></span>3 ~ 4.9</div>
+        <div><span style="background:#fb923c"></span>5 ~ 5.9</div>
+        <div><span style="background:#ef4444"></span>6 이상</div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 지역 중심점(대략적인 값). jeju_spots.json 의 area 값과 같은 이름
-        const CENTERS = {
-            "동쪽(성산)": [33.458, 126.930],
-            "동쪽(구좌)": [33.520, 126.850],
-            "제주시":     [33.500, 126.530],
-            "서쪽(한림)": [33.410, 126.270],
-            "서쪽(안덕)": [33.250, 126.330],
-            "서귀포":     [33.250, 126.560],
-        }
-        const MAX_RESULTS = 8
+        // 데이터: USGS 지진 피드 (인증키 불필요)
+        const FEED = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/"
 
-        // 같은 지역 장소가 한 점에 겹치지 않도록 중심점 둘레에 나선형으로 흩뿌린다
-        const place = (center, n) => {
-            const r = 0.006 + 0.004 * n
-            const a = n * 2.399963 // 황금각(rad)
-            return [center[0] + r * Math.sin(a), center[1] + r * Math.cos(a) * 1.2]
-        }
-
-        const map = L.map("map").setView([33.38, 126.55], 10)
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            attribution: "&copy; OpenStreetMap contributors", maxZoom: 18,
+        const map = L.map("map", { worldCopyJump: true }).setView([25, 130], 3)
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+            attribution: "&copy; OpenStreetMap contributors &copy; CARTO | 데이터: USGS", maxZoom: 12,
         }).addTo(map)
         const layer = L.layerGroup().addTo(map)
 
-        let spots = []
-        fetch("jeju_spots.json").then(r => r.json()).then(d => { spots = d.spots })
-            .catch(() => { msg.textContent = "jeju_spots.json 을 불러오지 못했습니다. Live Server 같은 로컬 서버로 열어주세요." })
+        const colorOf = m => m >= 6 ? "#ef4444" : m >= 5 ? "#fb923c" : m >= 3 ? "#facc15" : "#4ade80"
+        const sizeOf = m => Math.max(8, 6 + m * 5)
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
 
-        // api/tools.js 의 find_spots 와 같은 규칙
-        const findSpots = (area, indoor) =>
-            spots.filter(s => s.area.split("(")[0] === area && (indoor === null || s.indoor === indoor))
+        let data = []
 
-        go.onclick = () => {
-            const found = findSpots(area.value, indoor.value === "" ? null : indoor.value === "true")
+        const draw = () => {
+            const min = Number(minMag.value)
+            const shown = data.filter(f => (f.properties.mag ?? 0) >= min)
             layer.clearLayers()
-            const used = {}
-            const points = found.slice(0, MAX_RESULTS).map(s => {
-                const n = used[s.area] = (used[s.area] ?? -1) + 1
-                const pos = place(CENTERS[s.area], n)
-                L.marker(pos).addTo(layer)
-                    .bindPopup(`<b>${s.name}</b><br>${s.area} · ${s.indoor ? "실내" : "야외"}<br>${s.type}`)
-                return pos
-            })
-            msg.textContent = `${found.length}곳 중 ${points.length}곳 표시 (위치는 지역 중심 기준 대략값)`
-            if (points.length) map.fitBounds(points, { padding: [40, 40], maxZoom: 12 })
+            const now = Date.now()
+
+            for (const f of shown) {
+                const { mag, place, time, url } = f.properties
+                const [lng, lat, depth] = f.geometry.coordinates
+                const m = mag ?? 0
+                const size = sizeOf(m)
+                const recent = now - time < 60 * 60 * 1000 // 1시간 이내면 파동 효과
+                const icon = L.divIcon({
+                    className: "",
+                    iconSize: [size, size],
+                    html: `<div class="quake" style="--c:${colorOf(m)};width:${size}px;height:${size}px"><i></i>${recent ? '<i class="ring"></i>' : ""}</div>`,
+                })
+                L.marker([lat, lng], { icon, zIndexOffset: Math.round(m * 100) }).addTo(layer).bindPopup(
+                    `<b>규모 ${m.toFixed(1)}</b><br>${esc(place)}<br>` +
+                    `깊이 ${depth.toFixed(0)}km<br>${new Date(time).toLocaleString("ko-KR")}<br>` +
+                    `<a href="${esc(url)}" target="_blank" rel="noopener">상세 보기</a>`
+                )
+            }
+
+            if (!shown.length) { stats.textContent = "조건에 맞는 지진이 없습니다."; return }
+            const top = shown.reduce((a, b) => (b.properties.mag ?? 0) > (a.properties.mag ?? 0) ? b : a)
+            const last = shown.reduce((a, b) => b.properties.time > a.properties.time ? b : a)
+            const ago = Math.max(0, Math.round((now - last.properties.time) / 60000))
+            stats.innerHTML = `<b>${shown.length}</b>건 · 최대 <b>규모 ${(top.properties.mag ?? 0).toFixed(1)}</b> (${esc(top.properties.place)}) · 가장 최근 <b>${ago}분 전</b>`
         }
+
+        const load = () => {
+            stats.textContent = "불러오는 중..."
+            fetch(`${FEED}${period.value}.geojson`)
+                .then(r => r.json())
+                .then(d => { data = d.features; draw() })
+                .catch(() => { stats.textContent = "지진 데이터를 불러오지 못했습니다. 잠시 후 다시 시도하세요." })
+        }
+
+        period.onchange = load
+        minMag.onchange = draw
+        reload.onclick = load
+        load()
+        setInterval(load, 60000) // 1분마다 자동 갱신
     </script>
 </body>
 </html>
