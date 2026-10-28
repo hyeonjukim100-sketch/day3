@@ -3,119 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>실시간 지진 지도</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <title>제주 여행 추천 에이전트</title>
     <style>
-        body { margin: 0; font-family: sans-serif; background: #0b0f1a; color: #e6e9f2; }
-        #bar { padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        #bar h1 { font-size: 18px; margin: 0 8px 0 0; }
-        select, button { background: #1a2238; color: #e6e9f2; border: 1px solid #34406a; border-radius: 6px; padding: 6px 10px; }
-        #stats { padding: 0 12px 10px; font-size: 14px; color: #9aa6c8; }
-        #stats b { color: #fff; }
-        #map { height: calc(100vh - 100px); background: #0b0f1a; }
-
-        /* 일반 OSM 타일을 색 반전해서 다크 지도처럼 보이게 한다 */
-        .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6); }
-
-        /* 지진 표시: 규모만큼 커지고 퍼져 나가는 원 */
-        .quake { position: relative; }
-        .quake i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); opacity: .55; border: 1px solid var(--c); }
-        .quake i.ring { background: none; animation: pulse 2s ease-out infinite; }
-        @keyframes pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
-
-        .leaflet-popup-content-wrapper { background: #1a2238; color: #e6e9f2; }
-        .leaflet-popup-tip { background: #1a2238; }
-        .leaflet-popup-content a { color: #7fb4ff; }
-        #legend { position: absolute; right: 12px; bottom: 28px; z-index: 1000; background: #1a2238cc; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.7; }
-        #legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        body { margin: 0; font-family: sans-serif; background: #f4f7fb; color: #1d2433; }
+        main { max-width: 680px; margin: 0 auto; padding: 20px 16px 60px; }
+        h1 { font-size: 22px; margin: 0 0 4px; }
+        .sub { color: #667; font-size: 14px; margin: 0 0 16px; }
+        form { display: flex; gap: 8px; }
+        input { flex: 1; padding: 12px; font-size: 16px; border: 1px solid #c5cee0; border-radius: 8px; }
+        button { padding: 0 18px; font-size: 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+        button:disabled { background: #9db5ee; cursor: wait; }
+        .chips { margin: 10px 0 18px; display: flex; gap: 6px; flex-wrap: wrap; }
+        .chips span { font-size: 13px; background: #e5ecfb; color: #234; padding: 5px 10px; border-radius: 14px; cursor: pointer; }
+        .card { background: #fff; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px #0001; }
+        .me { background: #2563eb; color: #fff; }
+        .step { font-size: 13px; border-left: 3px solid #f59e0b; background: #fffbeb; }
+        .step code { background: #0000000d; padding: 1px 5px; border-radius: 4px; }
+        .answer { white-space: pre-wrap; line-height: 1.65; }
+        .err { background: #fee2e2; color: #991b1b; }
+        .wait { color: #667; }
     </style>
 </head>
 <body>
-    <div id="bar">
-        <h1>🌍 실시간 지진 지도</h1>
-        <select id="period">
-            <option value="all_hour">최근 1시간</option>
-            <option value="all_day" selected>최근 24시간</option>
-            <option value="all_week">최근 7일</option>
-        </select>
-        <select id="minMag">
-            <option value="0">모든 규모</option>
-            <option value="2.5">규모 2.5 이상</option>
-            <option value="4.5">규모 4.5 이상</option>
-            <option value="6">규모 6 이상</option>
-        </select>
-        <button id="reload">새로고침</button>
-    </div>
-    <div id="stats">불러오는 중...</div>
-    <div id="map"></div>
-    <div id="legend">
-        <div><span style="background:#4ade80"></span>규모 3 미만</div>
-        <div><span style="background:#facc15"></span>3 ~ 4.9</div>
-        <div><span style="background:#fb923c"></span>5 ~ 5.9</div>
-        <div><span style="background:#ef4444"></span>6 이상</div>
+<main>
+    <h1>🏝️ 제주 여행 추천 에이전트</h1>
+    <p class="sub">질문하면 에이전트가 날씨(get_weather)와 관광지(find_spots) 도구를 스스로 골라 호출해서 추천해 줍니다.</p>
+
+    <form id="form">
+        <input id="q" placeholder="예) 내일 서귀포에서 갈 만한 곳 추천해줘" maxlength="300" autocomplete="off">
+        <button id="send">추천</button>
+    </form>
+    <div class="chips" id="chips">
+        <span>제주시에서 오늘 가볼 만한 곳은?</span>
+        <span>동쪽에서 실내로 갈 만한 곳 알려줘</span>
+        <span>비 오면 서귀포 어디가 좋아?</span>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-        // 데이터: USGS 지진 피드 (인증키 불필요)
-        const FEED = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/"
+    <div id="log"></div>
+</main>
 
-        const map = L.map("map", { worldCopyJump: true }).setView([25, 130], 3)
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            attribution: "&copy; OpenStreetMap contributors | 데이터: USGS", maxZoom: 12,
-        }).addTo(map)
-        const layer = L.layerGroup().addTo(map)
+<script>
+    const TOOL_LABEL = { find_spots: "🔎 find_spots (관광지 검색)", get_weather: "🌤️ get_weather (날씨 조회)" }
+    const WEATHER_ICON = w => w.includes("비") || w.includes("소나기") ? "🌧️" : w.includes("눈") ? "❄️" : w.includes("맑") ? "☀️" : "⛅"
 
-        const colorOf = m => m >= 6 ? "#ef4444" : m >= 5 ? "#fb923c" : m >= 3 ? "#facc15" : "#4ade80"
-        const sizeOf = m => Math.max(8, 6 + m * 5)
-        const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+    const add = (cls, html) => {
+        const d = document.createElement("div")
+        d.className = "card " + cls
+        d.innerHTML = html
+        log.appendChild(d)
+        return d
+    }
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
 
-        let data = []
+    // 도구 결과를 한 줄로 요약
+    const summarize = s => {
+        const o = s.output
+        if (o.error) return "오류: " + esc(o.error)
+        if (s.tool === "get_weather") return `${WEATHER_ICON(o.now.weather)} 지금 ${o.now.weather} ${o.now.temperature}°C · 내일 ${o.forecast[1]?.weather ?? "-"} (강수확률 ${o.forecast[1]?.rain_probability ?? "-"}%)`
+        return `${o.total}곳 중 ${o.spots.length}곳: ` + o.spots.map(p => esc(p.name)).join(", ")
+    }
 
-        const draw = () => {
-            const min = Number(minMag.value)
-            const shown = data.filter(f => (f.properties.mag ?? 0) >= min)
-            layer.clearLayers()
-            const now = Date.now()
-
-            for (const f of shown) {
-                const { mag, place, time, url } = f.properties
-                const [lng, lat, depth] = f.geometry.coordinates
-                const m = mag ?? 0
-                const size = sizeOf(m)
-                const recent = now - time < 60 * 60 * 1000 // 1시간 이내면 파동 효과
-                const icon = L.divIcon({
-                    className: "",
-                    iconSize: [size, size],
-                    html: `<div class="quake" style="--c:${colorOf(m)};width:${size}px;height:${size}px"><i></i>${recent ? '<i class="ring"></i>' : ""}</div>`,
-                })
-                L.marker([lat, lng], { icon, zIndexOffset: Math.round(m * 100) }).addTo(layer).bindPopup(
-                    `<b>규모 ${m.toFixed(1)}</b><br>${esc(place)}<br>` +
-                    `깊이 ${depth.toFixed(0)}km<br>${new Date(time).toLocaleString("ko-KR")}<br>` +
-                    `<a href="${esc(url)}" target="_blank" rel="noopener">상세 보기</a>`
-                )
+    form.onsubmit = async e => {
+        e.preventDefault()
+        const message = q.value.trim()
+        if (!message) return
+        add("me", esc(message))
+        const wait = add("wait", "에이전트가 도구를 고르는 중...")
+        send.disabled = true
+        try {
+            const r = await fetch("/api/chat", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ message }),
+            })
+            const d = await r.json()
+            wait.remove()
+            for (const s of d.steps ?? []) {
+                add("step", `${TOOL_LABEL[s.tool] ?? esc(s.tool)} <code>${esc(JSON.stringify(s.input))}</code><br>→ ${summarize(s)}`)
             }
-
-            if (!shown.length) { stats.textContent = "조건에 맞는 지진이 없습니다."; return }
-            const top = shown.reduce((a, b) => (b.properties.mag ?? 0) > (a.properties.mag ?? 0) ? b : a)
-            const last = shown.reduce((a, b) => b.properties.time > a.properties.time ? b : a)
-            const ago = Math.max(0, Math.round((now - last.properties.time) / 60000))
-            stats.innerHTML = `<b>${shown.length}</b>건 · 최대 <b>규모 ${(top.properties.mag ?? 0).toFixed(1)}</b> (${esc(top.properties.place)}) · 가장 최근 <b>${ago}분 전</b>`
+            if (d.error) add("err", esc(d.error))
+            else add("answer", esc(d.answer))
+        } catch (err) {
+            wait.remove()
+            add("err", "요청 실패: " + esc(err.message))
         }
+        send.disabled = false
+        q.value = ""
+        window.scrollTo(0, document.body.scrollHeight)
+    }
 
-        const load = () => {
-            stats.textContent = "불러오는 중..."
-            fetch(`${FEED}${period.value}.geojson`)
-                .then(r => r.json())
-                .then(d => { data = d.features; draw() })
-                .catch(() => { stats.textContent = "지진 데이터를 불러오지 못했습니다. 잠시 후 다시 시도하세요." })
-        }
-
-        period.onchange = load
-        minMag.onchange = draw
-        reload.onclick = load
-        load()
-        setInterval(load, 60000) // 1분마다 자동 갱신
-    </script>
+    chips.onclick = e => { if (e.target.tagName === "SPAN") { q.value = e.target.textContent; q.focus() } }
+</script>
 </body>
 </html>
